@@ -1,9 +1,16 @@
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import telebot
 from telebot import types
+import os
 from secrets_1 import TOKEN
+
+# Проверка наличия файла базы данных и создание нового, если файл отсутствует
+DB_PATH = 'users.db'
+if not os.path.exists(DB_PATH):
+    open(DB_PATH, 'a').close()
+
 # Настройка базы данных
 Base = declarative_base()
 
@@ -21,28 +28,19 @@ class Task(Base):
     id = Column(Integer, primary_key=True)
     local_id = Column(Integer)  # Локальный ID для удобства пользователя
     text = Column(String)
+    reminder_time = Column(DateTime, nullable=True)  # Время напоминания
+    reminder_set = Column(Boolean, default=False)  # Флаг установленного напоминания
     user_id = Column(Integer, ForeignKey('users.id'))
     user = relationship('User', back_populates='tasks')
 
-engine = create_engine('sqlite:///users.db', echo=True)
-Base.metadata.create_all(engine)
+engine = create_engine(f'sqlite:///{DB_PATH}', echo=True)
+Base.metadata.create_all(engine, checkfirst=True)  # Создание таблиц, если их нет
 Session = sessionmaker(bind=engine)
 session = Session()
 
 
 bot = telebot.TeleBot(TOKEN)
 expecting_task = {}
-
-def get_commands_list():
-    return """
-    Вот список доступных команд:
-    /start - Регистрация в системе и приветственное сообщение
-    /new_task - Добавить новую задачу
-    /tasks - Показать все ваши задачи
-    /rmtasks - Удалить все ваши задачи
-    /rmtask - Удалить конкретную задачу по номеру
-    /help - Показать этот список команд
-    """
 
 def create_keyboard():
     keyboard = types.ReplyKeyboardMarkup(row_width=2)
@@ -73,7 +71,7 @@ def new_task(message):
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if user:
         expecting_task[chat_id] = True
-        bot.reply_to(message, "Отправь мне текст задачи.", reply_markup=create_keyboard())
+        bot.reply_to(message, "Отправь мне текст задачи:", reply_markup=create_keyboard())
     else:
         bot.reply_to(message, "Вы не зарегистрированы в системе. Используйте /start для регистрации.", reply_markup=create_keyboard())
 
@@ -82,7 +80,8 @@ def add_task(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if user:
-        new_task = Task(text=message.text, user=user, local_id=user.task_index)
+        new_task_text = message.text
+        new_task = Task(text=new_task_text, user=user, local_id=user.task_index)
         session.add(new_task)
         session.commit()
 
@@ -93,7 +92,7 @@ def add_task(message):
 
         user.task_index += 1  # Увеличиваем индекс следующей задачи
         del expecting_task[chat_id]
-        bot.reply_to(message, f"Задача добавлена: {message.text}", reply_markup=create_keyboard())
+        bot.reply_to(message, f"Задача добавлена: {new_task_text}", reply_markup=create_keyboard())
     else:
         bot.reply_to(message, "Произошла ошибка, возможно, вы не зарегистрированы.", reply_markup=create_keyboard())
 
@@ -104,7 +103,9 @@ def show_tasks(message):
     if user:
         tasks = user.tasks
         if tasks:
-            reply = "\n".join([f"{task.local_id}. {task.text}" for task in tasks])
+            reply = ""
+            for task in tasks:
+                reply += f"{task.local_id}. {task.text}\n"
         else:
             reply = "Список задач пуст."
         bot.reply_to(message, reply, reply_markup=create_keyboard())
@@ -160,5 +161,8 @@ def process_task_removal_input(message, user):
 @bot.message_handler(func=lambda message: True)
 def handle_unregistered_command(message):
     bot.reply_to(message, "Неправильная команда. " + get_commands_list(), reply_markup=create_keyboard())
+
+def get_commands_list():
+    return "Доступные команды:\n/new_task - Новая задача\n/tasks - Список задач\n/rmtasks - Удалить все\n/rmtask - Удалить задачу\n/help - Помощь"
 
 bot.polling()
