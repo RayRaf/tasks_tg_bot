@@ -76,9 +76,15 @@ def add_task(message):
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if user:
         new_task = Task(text=message.text, user=user, local_id=user.task_index)
-        user.task_index += 1  # Увеличиваем индекс следующей задачи
         session.add(new_task)
         session.commit()
+
+        # Полностью обновляем нумерацию всех задач
+        for index, task in enumerate(sorted(user.tasks, key=lambda x: x.local_id), start=1):
+            task.local_id = index
+        session.commit()
+
+        user.task_index += 1  # Увеличиваем индекс следующей задачи
         del expecting_task[chat_id]
         bot.reply_to(message, f"Задача добавлена: {message.text}")
     else:
@@ -103,12 +109,19 @@ def remove_tasks(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if user:
+        bot.send_message(chat_id, "Вы уверены, что хотите удалить все ваши задачи? (ответьте '1' для подтверждения)")
+        bot.register_next_step_handler(message, process_task_removal_confirmation, user)
+    else:
+        bot.reply_to(message, "Вы не зарегистрированы в системе.")
+
+def process_task_removal_confirmation(message, user):
+    if message.text == '1':
         user.tasks = []  # Удаляем все задачи пользователя
         user.task_index = 1  # Сброс индекса задач
         session.commit()
-        bot.reply_to(message, "Все задачи удалены.")
+        bot.reply_to(message, "Все ваши задачи удалены.")
     else:
-        bot.reply_to(message, "Вы не зарегистрированы в системе.")
+        bot.reply_to(message, "Операция отменена.")
 
 @bot.message_handler(commands=['rmtask'])
 def remove_task(message):
@@ -116,18 +129,29 @@ def remove_task(message):
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if user:
         bot.send_message(chat_id, "Введите номер задачи для удаления:")
-        bot.register_next_step_handler(message, process_task_removal, user)
+        bot.register_next_step_handler(message, process_task_removal_input, user)
     else:
         bot.reply_to(message, "Вы не зарегистрированы в системе.")
 
-def process_task_removal(message, user):
-    task_id = int(message.text)
-    task = next((task for task in user.tasks if task.local_id == task_id), None)
-    if task:
-        session.delete(task)
-        session.commit()
-        bot.reply_to(message, f"Задача {task_id} удалена.")
-    else:
-        bot.reply_to(message, f"Задача с номером {task_id} не найдена.")
+def process_task_removal_input(message, user):
+    try:
+        task_id = int(message.text)
+        task = next((task for task in user.tasks if task.local_id == task_id), None)
+        if task:
+            session.delete(task)
+            session.commit()
+            # Обновляем номера всех оставшихся задач
+            for index, task in enumerate(sorted(user.tasks, key=lambda x: x.local_id), start=1):
+                task.local_id = index
+            session.commit()
+            bot.reply_to(message, f"Задача {task_id} удалена.")
+        else:
+            bot.reply_to(message, f"Задача с номером {task_id} не найдена.")
+    except ValueError:
+        bot.reply_to(message, "Неправильный формат номера задачи. Пожалуйста, введите число.")
+
+@bot.message_handler(func=lambda message: True)
+def handle_unregistered_command(message):
+    bot.reply_to(message, "Неправильная команда. " + get_commands_list())
 
 bot.polling()
