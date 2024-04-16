@@ -68,7 +68,7 @@ def handle_commands(message):
     elif text == "Установить время":
         set_time(message)
     elif text == "Помощь":
-        bot.send_message(message.chat.id, "Используйте клавиатуру для управления задачами.", reply_markup=create_keyboard())
+        bot.send_message(message.chat.id, "Это бот для управления задачами и установки напоминаний. Используйте интерактивную клавиатуру для управления задачами.", reply_markup=create_keyboard())
     else:
         bot.send_message(message.chat.id, "Неизвестная команда, используйте клавиатуру.", reply_markup=create_keyboard())
 
