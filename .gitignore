@@ -1,5 +1,6 @@
 secrets_1.py
 users.db
+bot.db
 users.db-journal
 /venv/
 __pycache__/*

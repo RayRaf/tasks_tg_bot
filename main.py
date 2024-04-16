@@ -1,168 +1,203 @@
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
 import telebot
 from telebot import types
-import os
+import datetime
+import time
+import threading
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
 from secrets_1 import TOKEN
 
-# Проверка наличия файла базы данных и создание нового, если файл отсутствует
-DB_PATH = 'users.db'
-if not os.path.exists(DB_PATH):
-    open(DB_PATH, 'a').close()
-
 # Настройка базы данных
+engine = create_engine('sqlite:///bot.db')
 Base = declarative_base()
 
+# Определение таблицы пользователей
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True)
     chat_id = Column(Integer, unique=True)
-    first_name = Column(String)
-    username = Column(String)
-    task_index = Column(Integer, default=1)  # Начальный индекс задач
-    tasks = relationship('Task', back_populates='user', cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="user")
 
+# Определение таблицы задач
 class Task(Base):
     __tablename__ = 'tasks'
     id = Column(Integer, primary_key=True)
-    local_id = Column(Integer)  # Локальный ID для удобства пользователя
-    text = Column(String)
-    reminder_time = Column(DateTime, nullable=True)  # Время напоминания
-    reminder_set = Column(Boolean, default=False)  # Флаг установленного напоминания
     user_id = Column(Integer, ForeignKey('users.id'))
-    user = relationship('User', back_populates='tasks')
+    text = Column(String)
+    reminder_time = Column(DateTime, nullable=True)
+    reminder_set = Column(Boolean, default=False)
+    reminder_sent = Column(Boolean, default=False)
+    user = relationship("User", back_populates="tasks")
 
-engine = create_engine(f'sqlite:///{DB_PATH}', echo=True)
-Base.metadata.create_all(engine, checkfirst=True)  # Создание таблиц, если их нет
+# Создание таблиц, если они еще не существуют
+Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-
+# Настройка бота
 bot = telebot.TeleBot(TOKEN)
-expecting_task = {}
 
 def create_keyboard():
-    keyboard = types.ReplyKeyboardMarkup(row_width=2)
-    commands = ['/new_task Новая задача', '/tasks Список задач', '/rmtasks Удалить все', '/rmtask Удалить задачу', '/help Помощь']
-    buttons = [types.KeyboardButton(command) for command in commands]
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    buttons = ["Новая задача", "Список задач", "Удалить все", "Удалить задачу", "Помощь", "Установить время"]
     keyboard.add(*buttons)
     return keyboard
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
+def ensure_user_registered(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
     if not user:
-        new_user = User(chat_id=chat_id, first_name=message.chat.first_name, username=message.chat.username)
-        session.add(new_user)
+        user = User(chat_id=chat_id)
+        session.add(user)
         session.commit()
-        bot.reply_to(message, "Теперь ты зарегистрирован! Используй команды для управления задачами.", reply_markup=create_keyboard())
+    return user
+
+@bot.message_handler(func=lambda message: True)
+def handle_commands(message):
+    user = ensure_user_registered(message)
+    text = message.text
+    if text == "Новая задача":
+        new_task(message)
+    elif text == "Список задач":
+        list_tasks(message)
+    elif text == "Удалить все":
+        confirm_removal_all(message)
+    elif text == "Удалить задачу":
+        delete_task(message)
+    elif text == "Установить время":
+        set_time(message)
+    elif text == "Помощь":
+        bot.send_message(message.chat.id, "Используйте клавиатуру для управления задачами.", reply_markup=create_keyboard())
     else:
-        bot.reply_to(message, "Ты уже зарегистрирован." + get_commands_list(), reply_markup=create_keyboard())
+        bot.send_message(message.chat.id, "Неизвестная команда, используйте клавиатуру.", reply_markup=create_keyboard())
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    bot.reply_to(message, get_commands_list(), reply_markup=create_keyboard())
-
-@bot.message_handler(commands=['new_task'])
 def new_task(message):
-    chat_id = message.chat.id
-    user = session.query(User).filter_by(chat_id=chat_id).first()
-    if user:
-        expecting_task[chat_id] = True
-        bot.reply_to(message, "Отправь мне текст задачи:", reply_markup=create_keyboard())
-    else:
-        bot.reply_to(message, "Вы не зарегистрированы в системе. Используйте /start для регистрации.", reply_markup=create_keyboard())
+    msg = bot.send_message(message.chat.id, "Введите текст задачи:")
+    bot.register_next_step_handler(msg, add_task)
 
-@bot.message_handler(func=lambda message: message.chat.id in expecting_task and expecting_task[message.chat.id])
 def add_task(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
-    if user:
-        new_task_text = message.text
-        new_task = Task(text=new_task_text, user=user, local_id=user.task_index)
-        session.add(new_task)
-        session.commit()
+    new_task = Task(text=message.text, user=user)
+    session.add(new_task)
+    session.commit()
+    bot.send_message(chat_id, "Задача добавлена!", reply_markup=create_keyboard())
 
-        # Полностью обновляем нумерацию всех задач
-        for index, task in enumerate(sorted(user.tasks, key=lambda x: x.local_id), start=1):
-            task.local_id = index
-        session.commit()
-
-        user.task_index += 1  # Увеличиваем индекс следующей задачи
-        del expecting_task[chat_id]
-        bot.reply_to(message, f"Задача добавлена: {new_task_text}", reply_markup=create_keyboard())
-    else:
-        bot.reply_to(message, "Произошла ошибка, возможно, вы не зарегистрированы.", reply_markup=create_keyboard())
-
-@bot.message_handler(commands=['tasks'])
-def show_tasks(message):
+def list_tasks(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
-    if user:
-        tasks = user.tasks
-        if tasks:
-            reply = ""
-            for task in tasks:
-                reply += f"{task.local_id}. {task.text}\n"
-        else:
-            reply = "Список задач пуст."
-        bot.reply_to(message, reply, reply_markup=create_keyboard())
+    if user.tasks:
+        response = ''
+        for idx, task in enumerate(user.tasks):
+            if task.reminder_set:
+                reminder_time = task.reminder_time.strftime('%Y-%m-%d %H:%M')
+                response += f"{idx + 1}. {task.text} (Когда: {reminder_time})\n"
+            else:
+                response += f"{idx + 1}. {task.text}\n"
+        bot.send_message(chat_id, f"Ваши задачи:\n{response}", reply_markup=create_keyboard())
     else:
-        bot.reply_to(message, "Вы не зарегистрированы в системе.", reply_markup=create_keyboard())
+        bot.send_message(chat_id, "У вас пока нет задач.", reply_markup=create_keyboard())
 
-@bot.message_handler(commands=['rmtasks'])
-def remove_tasks(message):
+def confirm_removal_all(message):
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("Да, удалить все", callback_data="confirm_delete_all"))
+    keyboard.add(types.InlineKeyboardButton("Нет, оставить", callback_data="cancel_delete_all"))
+    bot.send_message(message.chat.id, "Вы уверены, что хотите удалить все задачи?", reply_markup=keyboard)
+
+def delete_task(message):
     chat_id = message.chat.id
     user = session.query(User).filter_by(chat_id=chat_id).first()
-    if user:
-        bot.send_message(chat_id, "Вы уверены, что хотите удалить все ваши задачи? (ответьте '1' для подтверждения)", reply_markup=create_keyboard())
-        bot.register_next_step_handler(message, process_task_removal_confirmation, user)
-    else:
-        bot.reply_to(message, "Вы не зарегистрированы в системе.", reply_markup=create_keyboard())
+    if not user.tasks:
+        bot.send_message(chat_id, "У вас нет задач для удаления.")
+        return
+    keyboard = types.InlineKeyboardMarkup()
+    for idx, task in enumerate(user.tasks):
+        button = types.InlineKeyboardButton(task.text, callback_data=f'delete_task_{task.id}')
+        keyboard.add(button)
+    bot.send_message(chat_id, "Выберите задачу для удаления:", reply_markup=keyboard)
 
-def process_task_removal_confirmation(message, user):
-    if message.text == '1':
-        user.tasks = []  # Удаляем все задачи пользователя
-        user.task_index = 1  # Сброс индекса задач
+def set_time(message):
+    chat_id = message.chat.id
+    user = session.query(User).filter_by(chat_id=chat_id).first()
+    if not user.tasks:
+        bot.send_message(chat_id, "У вас нет задач для установки времени.")
+        return
+    keyboard = types.InlineKeyboardMarkup()
+    for idx, task in enumerate(user.tasks):
+        button = types.InlineKeyboardButton(task.text, callback_data=f'set_time_{task.id}')
+        keyboard.add(button)
+    bot.send_message(chat_id, "Выберите задачу для установки времени:", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_query(call):
+    data = call.data
+    if data == "confirm_delete_all":
+        delete_all_tasks(call.message)
+        bot.answer_callback_query(call.id, "Все задачи удалены")
+    elif data == "cancel_delete_all":
+        bot.answer_callback_query(call.id, "Удаление отменено")
+        bot.edit_message_text("Удаление всех задач отменено.", call.message.chat.id, call.message.message_id)
+    elif data.startswith('delete_task_'):
+        task_id = int(data.split('_')[-1])
+        delete_specific_task(call, task_id)
+    elif data.startswith('set_time_'):
+        task_id = int(data.split('_')[-1])
+        request_time(call, task_id)
+
+def delete_specific_task(call, task_id):
+    task = session.query(Task).filter_by(id=task_id).first()
+    if task:
+        session.delete(task)
         session.commit()
-        bot.reply_to(message, "Все ваши задачи удалены.", reply_markup=create_keyboard())
+        bot.answer_callback_query(call.id, "Задача удалена")
+        list_tasks(call.message)
     else:
-        bot.reply_to(message, "Операция отменена.", reply_markup=create_keyboard())
+        bot.answer_callback_query(call.id, "Задача не найдена")
 
-@bot.message_handler(commands=['rmtask'])
-def remove_task(message):
-    chat_id = message.chat.id
-    user = session.query(User).filter_by(chat_id=chat_id).first()
-    if user:
-        bot.send_message(chat_id, "Введите номер задачи для удаления:", reply_markup=create_keyboard())
-        bot.register_next_step_handler(message, process_task_removal_input, user)
-    else:
-        bot.reply_to(message, "Вы не зарегистрированы в системе.", reply_markup=create_keyboard())
+def request_time(call, task_id):
+    msg = bot.send_message(call.message.chat.id, "Введите время для задачи в формате ГГГГ-ММ-ДД ЧЧ:ММ:")
+    bot.register_next_step_handler(msg, lambda message: set_reminder_time(message, task_id))
 
-def process_task_removal_input(message, user):
+def set_reminder_time(message, task_id):
     try:
-        task_id = int(message.text)
-        task = next((task for task in user.tasks if task.local_id == task_id), None)
+        reminder_time = datetime.datetime.strptime(message.text, '%Y-%m-%d %H:%M')
+        if reminder_time < datetime.datetime.now():
+            bot.send_message(message.chat.id, "Нельзя установить время в прошлом. Пожалуйста, введите корректное время.")
+            return
+        task = session.query(Task).filter_by(id=task_id).first()
         if task:
-            session.delete(task)
+            task.reminder_time = reminder_time
+            task.reminder_set = True
+            task.reminder_sent = False
             session.commit()
-            # Обновляем номера всех оставшихся задач
-            for index, task in enumerate(sorted(user.tasks, key=lambda x: x.local_id), start=1):
-                task.local_id = index
-            session.commit()
-            bot.reply_to(message, f"Задача {task_id} удалена.", reply_markup=create_keyboard())
+            bot.send_message(message.chat.id, "Время установлено.")
+            list_tasks(message)
         else:
-            bot.reply_to(message, f"Задача с номером {task_id} не найдена.", reply_markup=create_keyboard())
+            bot.send_message(message.chat.id, "Задача не найдена.")
     except ValueError:
-        bot.reply_to(message, "Неправильный формат номера задачи. Пожалуйста, введите число.", reply_markup=create_keyboard())
+        bot.send_message(message.chat.id, "Неправильный формат времени. Используйте формат ГГГГ-ММ-ДД ЧЧ:ММ.")
 
-@bot.message_handler(func=lambda message: True)
-def handle_unregistered_command(message):
-    bot.reply_to(message, "Неправильная команда. " + get_commands_list(), reply_markup=create_keyboard())
+def delete_all_tasks(message):
+    chat_id = message.chat.id
+    user = session.query(User).filter_by(chat_id=chat_id).first()
+    for task in user.tasks:
+        session.delete(task)
+    session.commit()
+    bot.send_message(chat_id, "Все задачи удалены.", reply_markup=create_keyboard())
 
-def get_commands_list():
-    return "Доступные команды:\n/new_task - Новая задача\n/tasks - Список задач\n/rmtasks - Удалить все\n/rmtask - Удалить задачу\n/help - Помощь"
+def periodic_notification_check():
+    while True:
+        now = datetime.datetime.now()
+        tasks_to_notify = session.query(Task).filter(Task.reminder_set == True, Task.reminder_sent == False, Task.reminder_time <= now).all()
+        for task in tasks_to_notify:
+            if task.reminder_time + datetime.timedelta(minutes=2) > now:
+                bot.send_message(task.user.chat_id, f"Напоминание: {task.text}")
+                task.reminder_sent = True
+                session.commit()
+        time.sleep(60)
 
-bot.polling()
+if __name__ == "__main__":
+    notification_thread = threading.Thread(target=periodic_notification_check)
+    notification_thread.start()
+    bot.polling()
