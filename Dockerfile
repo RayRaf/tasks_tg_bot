@@ -10,8 +10,11 @@ COPY requirements.txt .
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем остальные файлы проекта
-COPY . .
+# Копируем файл main.py
+COPY main.py .
 
-# Команда для запуска вашего приложения
+# Устанавливаем переменную среды для токена Telegram
+ENV TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+
+# Команда для запуска main.py
 CMD ["python", "main.py"]

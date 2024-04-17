@@ -6,7 +6,9 @@ import threading
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from secrets_1 import TOKEN
+import os
+
+# Получаем значение переменной среды TELEGRAM_TOKEN
 
 # Настройка базы данных
 engine = create_engine('sqlite:///bot.db')
@@ -36,7 +38,9 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 # Настройка бота
-bot = telebot.TeleBot(TOKEN)
+token = os.environ.get('TELEGRAM_TOKEN')
+bot = telebot.TeleBot(token)
+
 
 def create_keyboard():
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
