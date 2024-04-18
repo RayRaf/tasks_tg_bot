@@ -38,8 +38,8 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 # Настройка бота
-token = os.environ.get('TELEGRAM_TOKEN')
-bot = telebot.TeleBot(token)
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+bot = telebot.TeleBot(TOKEN)
 
 
 def create_keyboard():
