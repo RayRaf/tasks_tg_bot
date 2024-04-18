@@ -17,10 +17,12 @@
 
 ### Запуск Docker контейнера
 
-Использовать команду ``` docker run -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN image_name ```
+Использовать команду ``` docker run -d -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN image_name ```
 
 ### Запуск Docker контейнера из репозитория Docker Hub
-Использовать команду ``` docker run TELEGRAM_TOKEN=$TELEGRAM_TOKEN rayraf/tasks_tg_bot ```
+Использовать команду ``` docker run -d -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN rayraf/tasks_tg_bot ```. Если необходим перезапуск после перезагрузки то дописать следующую опцию: ```--restart always ```
+
+
 
 ### Набор команд:
 + Модели User и Task: Созданы две таблицы в базе данных, одна для пользователей и одна для задач. Каждая задача связана с пользователем через внешний ключ.
