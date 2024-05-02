@@ -17,10 +17,16 @@
 
 ### Запуск Docker контейнера
 
-Использовать команду ``` docker run -d -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN image_name ```
+Использовать команду вида ``` docker run -d -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN image_name ```
 
 ### Запуск Docker контейнера из репозитория Docker Hub
 Использовать команду ``` docker run -d -e TELEGRAM_TOKEN=$TELEGRAM_TOKEN rayraf/tasks_tg_bot ```. Если необходим перезапуск после перезагрузки то дописать следующую опцию: ```--restart always ```
+
+### Присваивание тега образу Docker
+Использовать команду вида ``` docker tag tg_bot rayraf/tasks_tg_bot:latest ```
+
+### Отправка образа в DockerHub
+Использовать команду вида ``` docker push rayraf/tasks_tg_bot:latest ```
 
 
 
