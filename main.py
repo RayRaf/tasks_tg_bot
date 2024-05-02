@@ -4,8 +4,7 @@ import datetime
 import time
 import threading
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 import os
 
 # Получаем значение переменной среды TELEGRAM_TOKEN
@@ -202,6 +201,11 @@ def periodic_notification_check():
         time.sleep(60)
 
 if __name__ == "__main__":
+    print("Tasks tg bot v1.0 is started")
     notification_thread = threading.Thread(target=periodic_notification_check)
     notification_thread.start()
-    bot.polling()
+    try:
+        bot.polling()
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+        time.sleep(10)
